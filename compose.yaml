@@ -1,0 +1,11 @@
+services:
+  flywheel-rh:
+    build:
+      context: .
+    image: flywheel-rh:latest
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    init: true

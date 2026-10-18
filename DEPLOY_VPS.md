@@ -36,32 +36,25 @@ TELEGRAM_ADMIN_USER_IDS=ISI_NUMERIC_TELEGRAM_USER_ID
 
 Jangan memasukkan `.env` ke Git atau membagikan token bot. Gunakan database baru; jangan arahkan `DB_PATH` ke database Runitup/BSC lama. Endpoint publik cocok untuk uji coba, bukan produksi.
 
-## Build dan observasi
+## Jalankan dan observasi
 
 ```sh
-docker build -t flywheel-rh:latest .
-docker run -d \
-  --name flywheel-rh \
-  --restart unless-stopped \
-  --env-file /srv/flywheel-rh/.env \
-  -v /srv/flywheel-rh/data:/app/data \
-  flywheel-rh:latest
-docker logs -f flywheel-rh
+docker compose up -d --build
+docker compose logs -f flywheel-rh
 ```
 
-Biarkan `DRY_RUN=true` selama beberapa jam atau satu hari dan periksa RPC error, lag, serta pesan duplikat. Setelah observasi bersih, ubah `DRY_RUN=false`, lalu recreate container dengan perintah `docker run` yang sama.
+Biarkan `DRY_RUN=true` selama beberapa jam atau satu hari dan periksa RPC error, lag, serta pesan duplikat. Setelah observasi bersih, ubah `DRY_RUN=false`, lalu jalankan `docker compose up -d` untuk membuat ulang container.
 
 ## Update dan operasi
 
 ```sh
 cd /srv/flywheel-rh
 git pull --ff-only origin main
-docker build -t flywheel-rh:latest .
-docker rm -f flywheel-rh
-# Jalankan kembali docker run dari bagian Build dan observasi.
+docker compose up -d --build
 
-docker logs -f flywheel-rh
-docker restart flywheel-rh
+docker compose logs -f flywheel-rh
+docker compose restart flywheel-rh
+docker compose ps
 tar -czf flywheel-rh-backup-$(date +%F).tgz data
 ```
 
