@@ -28,7 +28,7 @@ Use a **new** SQLite database for Flywheel. Do not reuse a BSC/Runitup database:
 - Event, token facts, and notification outbox rows commit atomically; uniqueness is `(transaction hash, log index)`.
 - The latest reorg window is replayed. A changed block hash cancels pending notifications and remediates delivered alerts.
 - Token name, symbol, decimals, supply, quote symbol, and social metadata are read directly from the token and quote contracts. The Flywheel web API is not used for discovery or enrichment.
-- Alerts link to Flywheel V2, Robinhood Blockscout, and the operator-configured GMGN and Based Bot referral destinations. The watcher never creates an order or represents a token as safe.
+- Alerts link to Flywheel V2, Robinhood Blockscout, plus GMGN and Based Bot referral URLs containing the launched token's contract address. The watcher never creates an order or represents a token as safe.
 
 ## Production checklist
 
