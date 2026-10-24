@@ -1,6 +1,5 @@
 import { createPublicClient, defineChain, fallback, http, webSocket } from 'viem';
 import type { AppConfig } from '../config.js';
-import { flywheelRobinhoodManifest } from '../integrations/flywheel-robinhood.js';
 import type { LaunchpadManifest } from '../integrations/types.js';
 
 export function createManifestChain(manifest: LaunchpadManifest) {
@@ -12,8 +11,6 @@ export function createManifestChain(manifest: LaunchpadManifest) {
   });
 }
 
-export const robinhoodChain = createManifestChain(flywheelRobinhoodManifest);
-
 export function createHttpClient(config: AppConfig, manifest: LaunchpadManifest) {
   return createPublicClient({
     chain: createManifestChain(manifest),
@@ -21,7 +18,7 @@ export function createHttpClient(config: AppConfig, manifest: LaunchpadManifest)
   });
 }
 
-export type FlywheelClient = ReturnType<typeof createHttpClient>;
+export type ChainClient = ReturnType<typeof createHttpClient>;
 
 export function createWebSocketClient(config: AppConfig, manifest: LaunchpadManifest) {
   if (!config.wsRpcUrl) return undefined;
@@ -37,7 +34,7 @@ export function isLogRangeError(error: unknown): boolean {
   return /(?:range|limit|too many|query returned more than|max results|response size|exceed)/.test(message);
 }
 
-/** A load-balanced RPC can answer getBlockNumber ahead of its getLogs backend. */
+/** A load-balanced RPC can answer getBlockNumber ahead of getLogs backend. */
 export function isRpcHeadLagError(error: unknown): boolean {
   const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
   return /block range extends beyond (?:the )?(?:current |latest )?head(?: block)?/.test(message)

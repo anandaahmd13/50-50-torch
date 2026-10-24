@@ -9,16 +9,34 @@ export interface VerifiedAddress {
 }
 
 export interface LaunchpadFactory extends VerifiedAddress {
-  /** First block at which the reviewed factory runtime code exists. */
+  /** First block at which reviewed factory runtime code exists. */
   startBlock: bigint;
   suite: string;
 }
 
+export type EventFieldPath = readonly [string, ...string[]];
+
+export interface TaxSplitBps {
+  creatorBps: bigint;
+  burnBps: bigint;
+  holdersBps: bigint;
+  liquidityBps: bigint;
+}
+
 export interface LaunchFieldMapping {
-  token: string;
-  creator: string;
-  quoteAsset: string;
-  holderRewardsEnabled: string;
+  token: EventFieldPath;
+  creator: EventFieldPath;
+  quoteAsset: EventFieldPath;
+  poolId: EventFieldPath;
+  buyTaxBps: EventFieldPath;
+  lpFee: EventFieldPath;
+  antiSnipeSeconds: EventFieldPath;
+  split: {
+    creatorBps: EventFieldPath;
+    burnBps: EventFieldPath;
+    holdersBps: EventFieldPath;
+    liquidityBps: EventFieldPath;
+  };
 }
 
 export interface TokenMetadataFunctionMapping {
@@ -62,7 +80,10 @@ export interface LaunchpadManifest {
     abi: Abi;
     event: AbiEvent;
     fieldNames: LaunchFieldMapping;
+    eligibleSplit: TaxSplitBps;
   };
+  /** Addresses emitted as quote assets that represent chain native currency. */
+  nativeQuoteAddresses: readonly Address[];
   tokenMetadata: {
     abi: Abi;
     functions: TokenMetadataFunctionMapping;
@@ -71,7 +92,7 @@ export interface LaunchpadManifest {
     abi: Abi;
     functions: QuoteMetadataFunctionMapping;
   };
-  /** Starting range and limits for the on-chain creator launch counter. */
+  /** Starting range and limits for on-chain creator launch counter. */
   creatorDeployCounter: {
     initialChunkSize: bigint;
     minimumChunkSize: bigint;

@@ -33,11 +33,35 @@ export interface StoredOutbox {
 export class Store {
   private readonly database: Database.Database;
 
-  constructor(filename: string) {
+  constructor(filename: string, integrationId: string) {
     fs.mkdirSync(path.dirname(path.resolve(filename)), { recursive: true });
     this.database = new Database(filename);
     const schemaPath = new URL('./schema.sql', import.meta.url);
     this.database.exec(fs.readFileSync(schemaPath, 'utf8'));
+    this.bindIntegration(integrationId);
+  }
+
+  private bindIntegration(integrationId: string): void {
+    const identity = this.database.prepare("SELECT value FROM metadata WHERE key = 'integration_id'").get() as { value: string } | undefined;
+    if (identity) {
+      if (identity.value !== integrationId) {
+        this.database.close();
+        throw new Error(`SQLite database belongs to integration ${identity.value}; use a new database for ${integrationId}`);
+      }
+      return;
+    }
+    const legacy = this.database.prepare(`
+      SELECT (
+        EXISTS(SELECT 1 FROM events LIMIT 1)
+        OR EXISTS(SELECT 1 FROM blocks LIMIT 1)
+        OR EXISTS(SELECT 1 FROM metadata LIMIT 1)
+      ) AS has_state
+    `).get() as { has_state: number };
+    if (legacy.has_state) {
+      this.database.close();
+      throw new Error(`SQLite database has legacy state without integration identity; use a new database for ${integrationId}`);
+    }
+    this.database.prepare("INSERT INTO metadata(key, value) VALUES ('integration_id', ?)").run(integrationId);
   }
 
   close(): void {
@@ -74,11 +98,7 @@ export class Store {
     return rows.map((row) => ({ number: BigInt(row.number), hash: row.hash }));
   }
 
-  /**
-   * Writes the canonical event, token facts, and all notification outbox rows
-   * in one SQLite transaction. A crash before commit produces no notification;
-   * a crash after commit is recovered from the outbox.
-   */
+  /** Writes canonical event, token facts, and all notification rows atomically. */
   recordLaunch(
     launch: DecodedLaunch,
     profile: LaunchProfile,
@@ -134,12 +154,12 @@ export class Store {
   }
 
   markSent(id: number, telegramMessageId?: number): void {
-    this.database.prepare(`UPDATE outbox SET status='SENT', telegram_message_id=?, sent_at=?, last_error=NULL WHERE id=? AND status='PENDING'`)
+    this.database.prepare("UPDATE outbox SET status='SENT', telegram_message_id=?, sent_at=?, last_error=NULL WHERE id=? AND status='PENDING'")
       .run(telegramMessageId ?? null, Date.now(), id);
   }
 
   retryOutbox(id: number, error: string, retryAfterMs: number): void {
-    this.database.prepare(`UPDATE outbox SET attempts=attempts+1, last_error=?, next_attempt_at=? WHERE id=? AND status='PENDING'`)
+    this.database.prepare("UPDATE outbox SET attempts=attempts+1, last_error=?, next_attempt_at=? WHERE id=? AND status='PENDING'")
       .run(error.slice(0, 500), Date.now() + retryAfterMs, id);
   }
 

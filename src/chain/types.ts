@@ -1,4 +1,5 @@
 import type { Address, Hex } from 'viem';
+import type { TaxSplitBps } from '../integrations/types.js';
 
 export interface ChainLog {
   address: Address;
@@ -17,7 +18,11 @@ export interface DecodedLaunch {
   token: Address;
   creator: Address;
   quoteAsset: Address;
-  holderRewardsEnabled: boolean;
+  poolId: Hex;
+  buyTaxBps: bigint;
+  lpFee: bigint;
+  antiSnipeSeconds: bigint;
+  splitBps: TaxSplitBps;
   transactionHash: Hex;
   logIndex: number;
   blockNumber: bigint;
@@ -42,6 +47,7 @@ export interface QuoteAssetMetadata {
   name?: string;
   symbol?: string;
   decimals?: number;
+  native?: boolean;
   unavailable: readonly string[];
 }
 
@@ -50,7 +56,7 @@ export interface LaunchEnrichment {
   quote: QuoteAssetMetadata;
 }
 
-/** Immutable values observed at the launch block, not at a later latest block. */
+/** Immutable values observed at launch block, not later latest block. */
 export interface CreatorSnapshot {
   nonce?: bigint;
   nativeBalance?: bigint;

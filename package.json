@@ -1,9 +1,9 @@
 {
-  "name": "flywheel-robinhood-launch-watcher",
+  "name": "torchpad-robinhood-launch-watcher",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Reorg-aware, read-only Flywheel V2 launch alerts for Robinhood Chain.",
+  "description": "Reorg-aware, read-only Torchpad launch alerts for Robinhood Chain.",
   "engines": {
     "node": ">=20"
   },

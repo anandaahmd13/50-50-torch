@@ -1,15 +1,15 @@
 import { z } from 'zod';
-import { ROBINHOOD_CHAIN_ID } from './contracts/flywheel.js';
+import { ROBINHOOD_CHAIN_ID } from './integrations/torch-robinhood.js';
 
 const integer = (min: number, fallback: number) =>
   z.coerce.number().int().min(min).default(fallback);
 
 const schema = z.object({
-  INTEGRATION_ID: z.string().min(1).default('flywheel-robinhood'),
+  INTEGRATION_ID: z.string().min(1).default('torch-robinhood'),
   CHAIN_ID: z.coerce.number().int().default(ROBINHOOD_CHAIN_ID),
   HTTP_RPC_URLS: z.string().min(1, 'HTTP_RPC_URLS is required'),
   WS_RPC_URL: z.string().url().optional().or(z.literal('')),
-  DB_PATH: z.string().min(1).default('./data/flywheel-robinhood.sqlite'),
+  DB_PATH: z.string().min(1).default('./data/torchpad-robinhood.sqlite'),
   POLL_INTERVAL_MS: integer(500, 4_000),
   REORG_WINDOW: integer(2, 24),
   INITIAL_CHUNK_SIZE: integer(10, 100),
@@ -80,7 +80,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
   };
 }
 
-/** Safe to log: deliberately excludes bot token and never expands URLs with credentials. */
+/** Safe to log: excludes bot token and never expands URLs with credentials. */
 export function redactConfig(config: AppConfig): Record<string, unknown> {
   return {
     integrationId: config.integrationId,

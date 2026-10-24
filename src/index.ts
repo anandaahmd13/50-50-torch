@@ -16,7 +16,7 @@ const manifest = getIntegration(config.integrationId);
 assertVerifiedManifest(manifest, config.chainId);
 const client = createHttpClient(config, manifest);
 const websocketClient = createWebSocketClient(config, manifest);
-const store = new Store(config.dbPath);
+const store = new Store(config.dbPath, manifest.id);
 const notifier = new TelegramNotifier(config, logger, manifest);
 
 async function recordLaunch(launch: DecodedLaunch): Promise<void> {
@@ -24,7 +24,7 @@ async function recordLaunch(launch: DecodedLaunch): Promise<void> {
   const body = formatLaunchAlert(launch, profile, manifest);
   const created = store.recordLaunch(launch, profile, body, config.telegramChatIds);
   if (created) {
-    logger.info({ token: launch.token, event: launch.eventName, tx: launch.transactionHash, block: launch.blockNumber.toString() }, 'canonical Flywheel launch recorded');
+    logger.info({ token: launch.token, event: launch.eventName, tx: launch.transactionHash, block: launch.blockNumber.toString() }, 'canonical Torchpad launch recorded');
     await notifier.drain(store);
   }
 }

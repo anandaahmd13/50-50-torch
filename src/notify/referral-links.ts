@@ -13,9 +13,10 @@ export function launchReferralKeyboard(
   { token, creator, transactionHash }: LaunchLinks,
 ) {
   const contract = token.toLowerCase();
+  const buyRow = manifest.links.buyLinks.map((link) => ({ text: link.label, url: `${link.urlPrefix}${contract}` }));
   return {
     inline_keyboard: [
-      manifest.links.buyLinks.map((link) => ({ text: link.label, url: `${link.urlPrefix}${contract}` })),
+      ...(buyRow.length ? [buyRow] : []),
       [
         { text: manifest.links.tokenPageLabel, url: `${manifest.links.tokenPage}${contract}` },
         { text: '🌍 Contract ↗', url: `${manifest.links.contractPage}${contract}` },

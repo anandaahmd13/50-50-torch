@@ -2,9 +2,9 @@ import type { AppConfig } from '../config.js';
 import type { Store } from '../db/store.js';
 import type { LaunchpadManifest } from '../integrations/types.js';
 import type { Logger } from 'pino';
-import { decodeLaunchLog } from './decode.js';
+import { decodeLaunchLog, isAlertEligible } from './decode.js';
 import { isLogRangeError, isRpcHeadLagError } from './rpc.js';
-import type { FlywheelClient } from './rpc.js';
+import type { ChainClient } from './rpc.js';
 import type { ChainLog, DecodedLaunch } from './types.js';
 
 export interface ScannerHooks {
@@ -13,15 +13,15 @@ export interface ScannerHooks {
 }
 
 /**
- * HTTP polling is authoritative for backfill and recovery. The same idempotent
- * path accepts websocket logs so a WS outage never loses a launch.
+ * HTTP polling is authoritative for backfill and recovery. Same idempotent
+ * path accepts websocket logs so WS outage never loses a qualifying launch.
  */
 export class DurableScanner {
   private running = false;
   private chunkSize: number;
 
   constructor(
-    private readonly client: FlywheelClient,
+    private readonly client: ChainClient,
     private readonly store: Store,
     private readonly config: AppConfig,
     private readonly manifest: LaunchpadManifest,
@@ -39,21 +39,18 @@ export class DurableScanner {
       await this.reconcile(head);
       const cursor = this.store.getCursor();
       const minimum = factoryMinimumStart(this.manifest);
-      // A first run monitors the latest reorg window. Historical replay is an
-      // explicit operator action through BOOTSTRAP_BLOCK, avoiding alert floods.
+      // First run observes mutable tail unless operator requested backfill.
       const initial = this.config.bootstrapBlock ?? (head > BigInt(this.config.reorgWindow) ? head - BigInt(this.config.reorgWindow) : minimum);
       let from = cursor === undefined ? initial : cursor + 1n;
       if (from < minimum) from = minimum;
-      // Rescan the mutable tail every time. Database uniqueness makes overlap safe.
+      // Rescan mutable tail. Database uniqueness makes overlap safe.
       const tail = head > BigInt(this.config.reorgWindow) ? head - BigInt(this.config.reorgWindow) : minimum;
       if (cursor !== undefined && tail < from) from = tail < minimum ? minimum : tail;
       while (from <= head) {
         const desiredEnd = from + BigInt(this.chunkSize - 1);
         const to = desiredEnd > head ? head : desiredEnd;
         const completed = await this.scanRange(from, to);
-        // Do not advance the durable cursor when the provider's getLogs
-        // backend is behind the head it just reported. The next polling pass
-        // retries this exact uncommitted range after POLL_INTERVAL_MS.
+        // Retain range when provider getLogs backend lags reported head.
         if (!completed) return;
         this.store.setCursor(to);
         from = to + 1n;
@@ -63,7 +60,7 @@ export class DurableScanner {
     }
   }
 
-  /** Returns false only when an RPC getLogs backend is temporarily behind head. */
+  /** Returns false only when RPC getLogs backend temporarily lags head. */
   async scanRange(fromBlock: bigint, toBlock: bigint): Promise<boolean> {
     let start = fromBlock;
     while (start <= toBlock) {
@@ -92,10 +89,7 @@ export class DurableScanner {
     return true;
   }
 
-  /**
-   * One factory + one event per request is portable across Robinhood RPC
-   * providers; range adaptation still handles ordinary block/result caps.
-   */
+  /** One reviewed factory/event per request works across Robinhood RPCs. */
   private async fetchLogs(fromBlock: bigint, toBlock: bigint): Promise<readonly ChainLog[]> {
     const batches = await Promise.all(
       this.manifest.factories.map(async (factory) => {
@@ -124,11 +118,19 @@ export class DurableScanner {
         continue;
       }
       this.store.recordBlock(launch.blockNumber, launch.blockHash);
+      if (!isAlertEligible(launch, this.manifest)) {
+        this.logger.debug({
+          token: launch.token,
+          transactionHash: launch.transactionHash,
+          splitBps: launch.splitBps,
+        }, 'skipping Torchpad launch outside eligible tax split');
+        continue;
+      }
       await this.hooks.onLaunch(launch);
     }
   }
 
-  /** Returns true only when a persisted canonical event block changed hash. */
+  /** Returns true only when persisted canonical event block changed hash. */
   private async reconcile(head: bigint): Promise<void> {
     const min = head > BigInt(this.config.reorgWindow) ? head - BigInt(this.config.reorgWindow) : 0n;
     const recent = this.store.getRecentBlocks(min);
@@ -145,7 +147,6 @@ export class DurableScanner {
 }
 
 function factoryMinimumStart(manifest: LaunchpadManifest): bigint {
-  // Kept local to avoid accepting a range before the verified registry begins.
   let minimum: bigint = manifest.factories[0]!.startBlock;
   for (const factory of manifest.factories) if (factory.startBlock < minimum) minimum = factory.startBlock;
   return minimum;

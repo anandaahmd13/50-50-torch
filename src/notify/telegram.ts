@@ -60,7 +60,7 @@ export class TelegramNotifier {
         try {
           await this.edit(item.chatId, item.telegramMessageId, reorgBody);
         } catch {
-          await this.send(item.chatId, '<b>REORGED</b> — a previously reported Flywheel launch was removed by a chain reorganization.');
+          await this.send(item.chatId, '<b>REORGED</b> — a previously reported Torchpad launch was removed by a chain reorganization.');
         }
         store.markReorgNoticeSent(item.id);
       } catch (error) {

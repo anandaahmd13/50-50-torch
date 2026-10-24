@@ -1,8 +1,8 @@
 services:
-  flywheel-rh:
+  torchpad-rh:
     build:
       context: .
-    image: flywheel-rh:latest
+    image: torchpad-rh:latest
     env_file:
       - .env
     volumes:

@@ -1,51 +1,61 @@
-# Flywheel V2 Robinhood launch watcher
+# Torchpad Robinhood launch watcher
 
-Read-only Node.js/TypeScript service that detects verified Flywheel V2 factory launches on Robinhood Chain, stores them idempotently, and sends Telegram alerts. Each alert snapshots the creator nonce, native balance, token balance, token percentage, and Flywheel deployment count at the launch block. It contains no wallet, private key, transaction signing, buy/sell signal, or trade execution.
+Read-only Node.js/TypeScript service. Detects verified Torchpad factory launches on Robinhood Chain, filters exact creator/burn split, stores qualifying launches idempotently, then sends Telegram alerts. It has no wallet, private key, transaction signing, buy/sell signal, or trade execution.
 
-Discovery is factory-based. The active manifest is selected by `INTEGRATION_ID` and the initial [`flywheel-robinhood`](src/integrations/flywheel-robinhood.ts) manifest accepts only StandardLaunchFactory `0xF05A…4b8d` on chain ID `4663`, starting at block `87735162`, and only its `TokenLaunched(token, creator, quote, holders)` event. Token addresses, web catalogs, and social posts are never discovery sources.
+Discovery uses only canonical factory event logs. Active manifest [`torch-robinhood`](src/integrations/torch-robinhood.ts) accepts only TorchFactory `0x7891eA889899928aFE637e4Cca8106188427776a` on chain ID `4663`, from block `85204474`, with event:
 
-The BOOMER sample token `0x127cdc74e44e3c60422b7e792ebe480c0f873ed5` is pinned as a golden on-chain event fixture from block `91295058`, transaction `0xbaea…fb1a`.
+```text
+TokenLaunched(address,address,bytes32,uint256,uint24,uint256,(uint16,uint16,uint16,uint16),string,address)
+```
+
+A notification requires exact event split:
+
+```text
+Creator:   5000 BPS (50%)
+Burn:      5000 BPS (50%)
+Holders:      0 BPS
+Liquidity:    0 BPS
+```
+
+`buyTaxBps` is shown but does not filter. Token addresses, web catalogs, metadata, social posts, address suffixes, and cumulative burn figures are never discovery/filter sources. LOUD `0xcd291fa4d3e2eb43e4639625092d31ae10e61111` from block `96093244` is golden on-chain fixture.
 
 ## Quick start
 
 ```sh
 npm install
 cp .env.example .env
-# Edit .env; keep DRY_RUN=true for the observation period.
+# Edit .env; keep DRY_RUN=true for observation.
 npm test
 npm run build
 npm start
 ```
 
-`HTTP_RPC_URLS` accepts comma-separated endpoints for viem fallback. The default public Robinhood RPC is convenient for testing; production should use independent, archive-capable HTTP endpoints and a reliable WebSocket endpoint.
+`HTTP_RPC_URLS` accepts comma-separated endpoints for viem fallback. Default public Robinhood RPC is useful for testing; production needs independent archive-capable HTTP endpoints and reliable WebSocket endpoint.
 
-Use a **new** SQLite database for Flywheel. Do not reuse a BSC/Runitup database: its cursor and stored block hashes are from another chain. With an empty database, only the mutable reorg window is scanned. For a controlled historical backfill, stop the service and set `BOOTSTRAP_BLOCK` no earlier than `87735162` before starting it in a test Telegram chat.
+Use new SQLite database for Torchpad. Existing Flywheel/other database fails startup: cursor, stored blocks, and pending outbox must never cross deployments. Empty database scans only mutable reorg window. For controlled historical backfill, stop service and set `BOOTSTRAP_BLOCK` no earlier than `85204474` before starting in test Telegram chat.
 
 ## Operational model
 
-- HTTP `getLogs` filtered to the reviewed factory and event is authoritative for recovery and backfill; ranges shrink after provider-limit errors.
-- WSS provides lower-latency detection when configured and shares the same SQLite idempotency path.
-- Event, token facts, and notification outbox rows commit atomically; uniqueness is `(transaction hash, log index)`.
-- The latest reorg window is replayed. A changed block hash cancels pending notifications and remediates delivered alerts.
-- Token name, symbol, decimals, supply, quote name, social metadata, and creator balances are read directly from the token and quote contracts at the launch block. The Flywheel web API is not used for discovery or enrichment.
-- Creator deployment count is the number of reviewed Flywheel factory `TokenLaunched` events emitted by that creator through the current launch, including that launch. The query uses the indexed creator topic and adapts to RPC range limits.
-- Alerts link to Flywheel V2, Robinhood Blockscout, plus GMGN and Based Bot referral URLs containing the launched token's contract address. The watcher never creates an order or represents a token as safe.
-
-## Adding another reviewed integration
-
-Add a manifest under `src/integrations/` with the reviewed factory address, start block, event ABI and field mapping, token/quote metadata ABIs, creator balance function, evidence URLs, and destination links. Register it in `src/integrations/registry.ts`, add a fixture, and set `INTEGRATION_ID` to its ID. Startup rejects missing evidence, invalid ABI/event mappings, and unverified factories.
+- HTTP `getLogs` on reviewed factory/event is authority for recovery/backfill; range shrinks after provider limits.
+- WSS lowers detection latency and shares SQLite idempotency path.
+- Every decoded launch records its canonical block hash. Nonmatching split launches advance scan/reorg state but never profile token, write event/outbox, or alert.
+- Qualifying event, token facts, and notification outbox rows commit atomically. Uniqueness: `(transaction hash, log index)`.
+- Mutable reorg window is replayed. Changed block hash cancels pending notifications and remediates delivered alerts.
+- Name, symbol, decimals, supply, and creator balances read at launch block. Zero-address native quote is represented locally as native ETH; no ERC-20 calls target zero address.
+- Creator deploy count queries reviewed TorchFactory `TokenLaunched` events through current launch using indexed creator topic.
+- Alerts link Torchpad, Robinhood Blockscout, GMGN, and Based Bot. Watcher does not create orders or claim token safety.
 
 ## Production checklist
 
-1. Keep `DRY_RUN=true` for several hours/day and inspect RPC errors, lag, duplicate rate, and registry results.
-2. Use a test `TELEGRAM_CHAT_IDS`, then set `DRY_RUN=false`; restrict `TELEGRAM_ADMIN_USER_IDS` to numeric IDs you control.
-3. Persist and back up `DB_PATH`; do not share `.env` or its bot token.
-4. Run under systemd or PM2 with restart-on-failure. SQLite outbox delivery makes restarts safe.
-5. Before adding a factory, review its ABI, source verification, deployment block, and evidence. Never auto-allowlist a discovered address.
+1. Keep `DRY_RUN=true` for several hours/day. Inspect RPC errors, lag, skipped split logs, and duplicate rate.
+2. Use test `TELEGRAM_CHAT_IDS`; set `DRY_RUN=false` only after clean observation. Restrict `TELEGRAM_ADMIN_USER_IDS` to numeric IDs you control.
+3. Persist and back up `DB_PATH`; do not share `.env` or bot token.
+4. Run systemd, Docker, or PM2 with restart-on-failure. SQLite outbox makes restarts safe.
+5. Review ABI/source/deployment block before changing factory. Never auto-allowlist discovered address.
 
 ## Registry evidence
 
-- [Flywheel native V4 integration](https://flywheel.cash/integrations/20261013/index.html)
-- [Discovery and accounting specification](https://flywheel.cash/integrations/20261013/INDEXING.md)
-- [Deployment record](https://flywheel.cash/integrations/20261013/deployment.json)
-- [Factory Sourcify record](https://repo.sourcify.dev/4663/0xF05A26e92E27b8F0385f6895F5507Db26A2F4b8d)
+- [Torchpad contract addresses](https://docs.torchpad.fun/protocol/contract-addresses)
+- [TorchFactory verified source](https://robinhoodchain.blockscout.com/address/0x7891eA889899928aFE637e4Cca8106188427776a?tab=contract)
+- [TorchFactory deployment](https://robinhoodchain.blockscout.com/tx/0x94ed6872334462ba95ff71adb3471868dd5a777ae743f41cc0fa40df3dcead36)
+- [LOUD canonical launch](https://robinhoodchain.blockscout.com/tx/0x20562c7a2365968dcb68439f21f9031c8fb1a148d56a0117db0d4bb3ed0c17d9)

@@ -1,9 +1,11 @@
 import { isAddress, keccak256, stringToHex } from 'viem';
-import type { Hex } from 'viem';
-import { flywheelRobinhoodManifest } from './flywheel-robinhood.js';
-import type { LaunchpadManifest } from './types.js';
+import type { AbiParameter, Hex } from 'viem';
 
-const manifests = [flywheelRobinhoodManifest] as const satisfies readonly LaunchpadManifest[];
+type EventParameter = AbiParameter & { components?: readonly EventParameter[]; indexed?: boolean };
+import { torchRobinhoodManifest } from './torch-robinhood.js';
+import type { EventFieldPath, LaunchpadManifest } from './types.js';
+
+const manifests = [torchRobinhoodManifest] as const satisfies readonly LaunchpadManifest[];
 
 export function getIntegration(id: string): LaunchpadManifest {
   const manifest = manifests.find((candidate) => candidate.id === id);
@@ -15,15 +17,36 @@ export function listIntegrations(): readonly LaunchpadManifest[] {
   return manifests;
 }
 
+function canonicalAbiType(input: EventParameter): string {
+  if (input.type !== 'tuple') return input.type;
+  if (!input.components) throw new Error(`Tuple ${input.name || '(unnamed)'} is missing components`);
+  return `(${input.components.map((component: EventParameter) => canonicalAbiType(component)).join(',')})`;
+}
+
 export function launchEventSignature(manifest: LaunchpadManifest): string {
-  return `${manifest.launch.event.name}(${manifest.launch.event.inputs.map((input) => input.type).join(',')})`;
+  return `${manifest.launch.event.name}(${manifest.launch.event.inputs.map((input) => canonicalAbiType(input as EventParameter)).join(',')})`;
 }
 
 export function launchEventTopic(manifest: LaunchpadManifest): Hex {
   return keccak256(stringToHex(launchEventSignature(manifest)));
 }
 
-/** Refuse an incomplete or unreviewed integration before any RPC calls occur. */
+function resolveInput(inputs: readonly AbiParameter[], path: EventFieldPath): EventParameter | undefined {
+  let candidates = inputs as readonly EventParameter[];
+  let match: EventParameter | undefined;
+  for (const part of path) {
+    match = candidates.find((input) => input.name === part);
+    if (!match) return undefined;
+    candidates = match.components ?? [];
+  }
+  return match;
+}
+
+function splitTotal(split: LaunchpadManifest['launch']['eligibleSplit']): bigint {
+  return split.creatorBps + split.burnBps + split.holdersBps + split.liquidityBps;
+}
+
+/** Refuse incomplete/unreviewed integration before any RPC calls occur. */
 export function assertVerifiedManifest(manifest: LaunchpadManifest, chainId: number): void {
   if (manifest.chain.id !== chainId) {
     throw new Error(`Integration ${manifest.id} is chainId ${manifest.chain.id}, got ${chainId}`);
@@ -45,17 +68,38 @@ export function assertVerifiedManifest(manifest: LaunchpadManifest, chainId: num
       throw new Error(`Integration ${manifest.id} contains an unverified or invalid factory`);
     }
   }
+  if (!manifest.nativeQuoteAddresses.every((address) => isAddress(address))) {
+    throw new Error(`Integration ${manifest.id} has an invalid native quote address`);
+  }
 
-  const inputs = new Map(manifest.launch.event.inputs.map((input) => [input.name, input]));
-  const expected = {
-    token: 'address',
-    creator: 'address',
-    quoteAsset: 'address',
-    holderRewardsEnabled: 'bool',
-  } as const;
-  for (const [field, type] of Object.entries(expected)) {
-    const name = manifest.launch.fieldNames[field as keyof typeof expected];
-    if (inputs.get(name)?.type !== type) throw new Error(`Integration ${manifest.id} has invalid ${field} event mapping`);
+  const { fieldNames } = manifest.launch;
+  const expected = [
+    ['token', fieldNames.token, 'address'],
+    ['creator', fieldNames.creator, 'address'],
+    ['quoteAsset', fieldNames.quoteAsset, 'address'],
+    ['poolId', fieldNames.poolId, 'bytes32'],
+    ['buyTaxBps', fieldNames.buyTaxBps, 'uint256'],
+    ['lpFee', fieldNames.lpFee, 'uint24'],
+    ['antiSnipeSeconds', fieldNames.antiSnipeSeconds, 'uint256'],
+    ['creatorBps', fieldNames.split.creatorBps, 'uint16'],
+    ['burnBps', fieldNames.split.burnBps, 'uint16'],
+    ['holdersBps', fieldNames.split.holdersBps, 'uint16'],
+    ['liquidityBps', fieldNames.split.liquidityBps, 'uint16'],
+  ] as const;
+  for (const [field, path, type] of expected) {
+    if (resolveInput(manifest.launch.event.inputs, path)?.type !== type) {
+      throw new Error(`Integration ${manifest.id} has invalid ${field} event mapping`);
+    }
+  }
+  const creatorInput = resolveInput(manifest.launch.event.inputs, fieldNames.creator);
+  if (fieldNames.creator.length !== 1 || !creatorInput?.indexed) {
+    throw new Error(`Integration ${manifest.id} creator mapping must be a top-level indexed event input`);
+  }
+  for (const value of Object.values(manifest.launch.eligibleSplit)) {
+    if (value < 0n || value > 10_000n) throw new Error(`Integration ${manifest.id} has invalid eligible split BPS`);
+  }
+  if (splitTotal(manifest.launch.eligibleSplit) !== 10_000n) {
+    throw new Error(`Integration ${manifest.id} eligible split must total 10000 BPS`);
   }
   for (const [field, name] of Object.entries(manifest.tokenMetadata.functions)) {
     if (field === 'creatorBalance') continue;

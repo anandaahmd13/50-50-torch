@@ -1,5 +1,5 @@
 import type { DecodedLaunch, LaunchEnrichment, LaunchProfile, QuoteAssetMetadata, TokenMetadata } from './types.js';
-import type { FlywheelClient } from './rpc.js';
+import type { ChainClient } from './rpc.js';
 import { isLogRangeError } from './rpc.js';
 import type { LaunchpadManifest } from '../integrations/types.js';
 
@@ -27,7 +27,7 @@ const asNumber = (value: unknown): number | undefined => typeof value === 'numbe
 const asBigInt = (value: unknown): bigint | undefined => typeof value === 'bigint' ? value : undefined;
 
 function readNoArg(
-  client: FlywheelClient,
+  client: ChainClient,
   address: DecodedLaunch['token'],
   abi: LaunchpadManifest['tokenMetadata']['abi'],
   functionName: string | undefined,
@@ -46,7 +46,7 @@ function readNoArg(
 }
 
 function readCreatorTokenBalance(
-  client: FlywheelClient,
+  client: ChainClient,
   manifest: LaunchpadManifest,
   launch: DecodedLaunch,
 ): Promise<unknown> {
@@ -59,22 +59,23 @@ function readCreatorTokenBalance(
   } as never) as Promise<unknown>;
 }
 
+function isNativeQuote(manifest: LaunchpadManifest, quote: DecodedLaunch['quoteAsset']): boolean {
+  return manifest.nativeQuoteAddresses.some((address) => address.toLowerCase() === quote.toLowerCase());
+}
+
 /**
- * Metadata is read directly from the newly launched token and its quote token.
- * Individual parallel reads avoid assuming a Multicall deployment on Robinhood
- * Chain. The website indexer is not used for discovery or enrichment.
+ * Metadata is read at launch block. Native quotes derive from manifest, never
+ * ERC-20 calls to zero address. Individual failure never suppresses alert.
  */
 export async function enrichLaunch(
-  client: FlywheelClient,
+  client: ChainClient,
   manifest: LaunchpadManifest,
   launch: DecodedLaunch,
   timeoutMs = 5_000,
 ): Promise<LaunchEnrichment> {
   const tokenUnavailable: string[] = [];
-  const quoteUnavailable: string[] = [];
   const tokenFunctions = manifest.tokenMetadata.functions;
-  const quoteFunctions = manifest.quoteMetadata.functions;
-  const [name, symbol, decimals, totalSupply, logoUri, description, website, twitter, telegram, quoteName, quoteSymbol, quoteDecimals] = await Promise.all([
+  const [name, symbol, decimals, totalSupply, logoUri, description, website, twitter, telegram] = await Promise.all([
     readNoArg(client, launch.token, manifest.tokenMetadata.abi, tokenFunctions.name, launch.blockNumber, timeoutMs, tokenUnavailable),
     readNoArg(client, launch.token, manifest.tokenMetadata.abi, tokenFunctions.symbol, launch.blockNumber, timeoutMs, tokenUnavailable),
     readNoArg(client, launch.token, manifest.tokenMetadata.abi, tokenFunctions.decimals, launch.blockNumber, timeoutMs, tokenUnavailable),
@@ -84,9 +85,6 @@ export async function enrichLaunch(
     readNoArg(client, launch.token, manifest.tokenMetadata.abi, tokenFunctions.website, launch.blockNumber, timeoutMs, tokenUnavailable),
     readNoArg(client, launch.token, manifest.tokenMetadata.abi, tokenFunctions.twitter, launch.blockNumber, timeoutMs, tokenUnavailable),
     readNoArg(client, launch.token, manifest.tokenMetadata.abi, tokenFunctions.telegram, launch.blockNumber, timeoutMs, tokenUnavailable),
-    readNoArg(client, launch.quoteAsset, manifest.quoteMetadata.abi, quoteFunctions.name, launch.blockNumber, timeoutMs, quoteUnavailable, 'quote name'),
-    readNoArg(client, launch.quoteAsset, manifest.quoteMetadata.abi, quoteFunctions.symbol, launch.blockNumber, timeoutMs, quoteUnavailable, 'quote symbol'),
-    readNoArg(client, launch.quoteAsset, manifest.quoteMetadata.abi, quoteFunctions.decimals, launch.blockNumber, timeoutMs, quoteUnavailable, 'quote decimals'),
   ]);
 
   const token: TokenMetadata = {
@@ -101,22 +99,48 @@ export async function enrichLaunch(
     telegram: asString(telegram),
     unavailable: [...new Set(tokenUnavailable)],
   };
-  const quote: QuoteAssetMetadata = {
-    address: launch.quoteAsset,
-    name: asString(quoteName),
-    symbol: asString(quoteSymbol),
-    decimals: asNumber(quoteDecimals),
-    unavailable: [...new Set(quoteUnavailable)],
-  };
+  const quote = isNativeQuote(manifest, launch.quoteAsset)
+    ? nativeQuote(manifest, launch)
+    : await enrichErc20Quote(client, manifest, launch, timeoutMs);
   return { token, quote };
 }
 
-/**
- * Read creator facts at the exact post-transaction state of the launch block.
- * One unavailable RPC call must never suppress an otherwise valid launch alert.
- */
+function nativeQuote(manifest: LaunchpadManifest, launch: DecodedLaunch): QuoteAssetMetadata {
+  return {
+    address: launch.quoteAsset,
+    name: manifest.chain.nativeCurrency.name,
+    symbol: manifest.chain.nativeCurrency.symbol,
+    decimals: manifest.chain.nativeCurrency.decimals,
+    native: true,
+    unavailable: [],
+  };
+}
+
+async function enrichErc20Quote(
+  client: ChainClient,
+  manifest: LaunchpadManifest,
+  launch: DecodedLaunch,
+  timeoutMs: number,
+): Promise<QuoteAssetMetadata> {
+  const unavailable: string[] = [];
+  const functions = manifest.quoteMetadata.functions;
+  const [name, symbol, decimals] = await Promise.all([
+    readNoArg(client, launch.quoteAsset, manifest.quoteMetadata.abi, functions.name, launch.blockNumber, timeoutMs, unavailable, 'quote name'),
+    readNoArg(client, launch.quoteAsset, manifest.quoteMetadata.abi, functions.symbol, launch.blockNumber, timeoutMs, unavailable, 'quote symbol'),
+    readNoArg(client, launch.quoteAsset, manifest.quoteMetadata.abi, functions.decimals, launch.blockNumber, timeoutMs, unavailable, 'quote decimals'),
+  ]);
+  return {
+    address: launch.quoteAsset,
+    name: asString(name),
+    symbol: asString(symbol),
+    decimals: asNumber(decimals),
+    unavailable: [...new Set(unavailable)],
+  };
+}
+
+/** Read creator facts at exact post-transaction state of launch block. */
 export async function profileLaunch(
-  client: FlywheelClient,
+  client: ChainClient,
   manifest: LaunchpadManifest,
   launch: DecodedLaunch,
   timeoutMs = 5_000,
@@ -147,7 +171,7 @@ export async function profileLaunch(
 }
 
 async function countCreatorLaunches(
-  client: FlywheelClient,
+  client: ChainClient,
   manifest: LaunchpadManifest,
   launch: DecodedLaunch,
 ): Promise<number> {
@@ -163,7 +187,7 @@ async function countCreatorLaunches(
         const logs = await client.getLogs({
           address: factory.address,
           event: manifest.launch.event as never,
-          args: { [manifest.launch.fieldNames.creator]: launch.creator } as never,
+          args: { [manifest.launch.fieldNames.creator[0]]: launch.creator } as never,
           fromBlock,
           toBlock,
         }) as unknown as readonly unknown[];
