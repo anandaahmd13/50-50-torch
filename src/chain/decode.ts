@@ -1,10 +1,8 @@
 import { decodeEventLog, getAddress } from 'viem';
 import type { Address, Hex } from 'viem';
-import {
-  flywheelLaunchAbi,
-  launchEventNames,
-  launchTopicValues,
-} from '../contracts/flywheel.js';
+import { flywheelRobinhoodManifest } from '../integrations/flywheel-robinhood.js';
+import { launchEventTopic } from '../integrations/registry.js';
+import type { LaunchpadManifest } from '../integrations/types.js';
 import type { ChainLog, DecodedLaunch } from './types.js';
 
 type EventArgs = Record<string, unknown>;
@@ -17,32 +15,36 @@ function asBoolean(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined;
 }
 
-/** Decode only Flywheel V2 StandardLaunchFactory.TokenLaunched logs. */
-export function decodeLaunchLog(log: ChainLog): DecodedLaunch | undefined {
+/** Decode only the reviewed launch event in the active integration manifest. */
+export function decodeLaunchLog(
+  log: ChainLog,
+  manifest: LaunchpadManifest = flywheelRobinhoodManifest,
+): DecodedLaunch | undefined {
   const topic0 = log.topics[0]?.toLowerCase();
-  if (!topic0 || !launchTopicValues.some((topic) => topic.toLowerCase() === topic0)) return undefined;
+  if (!topic0 || launchEventTopic(manifest).toLowerCase() !== topic0) return undefined;
   if (log.blockNumber === null || log.blockHash === null || log.transactionHash === null || log.logIndex === null) {
     throw new Error('Cannot persist an unresolved log without block, transaction hash, and log index');
   }
 
   const decoded = decodeEventLog({
-    abi: flywheelLaunchAbi,
+    abi: manifest.launch.abi,
     data: log.data,
     topics: log.topics as [Hex, ...Hex[]],
     strict: true,
   });
-  if (!launchEventNames.includes(decoded.eventName as (typeof launchEventNames)[number])) return undefined;
+  if (decoded.eventName !== manifest.launch.event.name) return undefined;
 
-  const args = decoded.args as EventArgs;
-  const token = asAddress(args.token);
-  const creator = asAddress(args.creator);
-  const quoteAsset = asAddress(args.quote);
-  const holderRewardsEnabled = asBoolean(args.holders);
+  const args = decoded.args as unknown as EventArgs;
+  const { fieldNames } = manifest.launch;
+  const token = asAddress(args[fieldNames.token]);
+  const creator = asAddress(args[fieldNames.creator]);
+  const quoteAsset = asAddress(args[fieldNames.quoteAsset]);
+  const holderRewardsEnabled = asBoolean(args[fieldNames.holderRewardsEnabled]);
   if (!token || !creator || !quoteAsset || holderRewardsEnabled === undefined) {
     throw new Error(`Malformed ${decoded.eventName}: missing required launch field`);
   }
   return {
-    eventName: decoded.eventName as DecodedLaunch['eventName'],
+    eventName: decoded.eventName,
     factory: getAddress(log.address),
     token,
     creator,

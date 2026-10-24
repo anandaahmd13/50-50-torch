@@ -1,6 +1,6 @@
-import { flywheelFactories, flywheelLaunchEvents, isVerifiedFactory } from '../contracts/flywheel.js';
 import type { AppConfig } from '../config.js';
 import type { Store } from '../db/store.js';
+import type { LaunchpadManifest } from '../integrations/types.js';
 import type { Logger } from 'pino';
 import { decodeLaunchLog } from './decode.js';
 import { isLogRangeError, isRpcHeadLagError } from './rpc.js';
@@ -24,6 +24,7 @@ export class DurableScanner {
     private readonly client: FlywheelClient,
     private readonly store: Store,
     private readonly config: AppConfig,
+    private readonly manifest: LaunchpadManifest,
     private readonly hooks: ScannerHooks,
     private readonly logger: Logger,
   ) {
@@ -37,7 +38,7 @@ export class DurableScanner {
       const head = await this.client.getBlockNumber();
       await this.reconcile(head);
       const cursor = this.store.getCursor();
-      const minimum = factoryMinimumStart();
+      const minimum = factoryMinimumStart(this.manifest);
       // A first run monitors the latest reorg window. Historical replay is an
       // explicit operator action through BOOTSTRAP_BLOCK, avoiding alert floods.
       const initial = this.config.bootstrapBlock ?? (head > BigInt(this.config.reorgWindow) ? head - BigInt(this.config.reorgWindow) : minimum);
@@ -97,10 +98,15 @@ export class DurableScanner {
    */
   private async fetchLogs(fromBlock: bigint, toBlock: bigint): Promise<readonly ChainLog[]> {
     const batches = await Promise.all(
-      flywheelFactories.flatMap((factory) => flywheelLaunchEvents.map(async (event) => {
-        const logs = await this.client.getLogs({ address: factory.address, event, fromBlock, toBlock });
+      this.manifest.factories.map(async (factory) => {
+        const logs = await this.client.getLogs({
+          address: factory.address,
+          event: this.manifest.launch.event as never,
+          fromBlock,
+          toBlock,
+        });
         return logs as unknown as readonly ChainLog[];
-      })),
+      }),
     );
     return batches.flat().sort((left, right) => {
       const byBlock = Number((left.blockNumber ?? 0n) - (right.blockNumber ?? 0n));
@@ -111,9 +117,9 @@ export class DurableScanner {
   async processLogs(logs: readonly ChainLog[]): Promise<void> {
     for (const log of logs) {
       if (log.removed) continue;
-      const launch = decodeLaunchLog(log);
+      const launch = decodeLaunchLog(log, this.manifest);
       if (!launch) continue;
-      if (!isVerifiedFactory(launch.factory)) {
+      if (!this.manifest.factories.some((factory) => factory.address.toLowerCase() === launch.factory.toLowerCase())) {
         this.logger.error({ factory: launch.factory, transactionHash: launch.transactionHash }, 'refusing non-registry launch log');
         continue;
       }
@@ -138,9 +144,9 @@ export class DurableScanner {
   }
 }
 
-function factoryMinimumStart(): bigint {
+function factoryMinimumStart(manifest: LaunchpadManifest): bigint {
   // Kept local to avoid accepting a range before the verified registry begins.
-  let minimum: bigint = flywheelFactories[0]!.startBlock;
-  for (const factory of flywheelFactories) if (factory.startBlock < minimum) minimum = factory.startBlock;
+  let minimum: bigint = manifest.factories[0]!.startBlock;
+  for (const factory of manifest.factories) if (factory.startBlock < minimum) minimum = factory.startBlock;
   return minimum;
 }

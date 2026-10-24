@@ -1,8 +1,8 @@
 import { formatUnits } from 'viem';
-import type { DecodedLaunch, LaunchEnrichment } from '../chain/types.js';
+import type { DecodedLaunch, LaunchProfile } from '../chain/types.js';
+import type { LaunchpadManifest } from '../integrations/types.js';
 
 const CONTROL_OR_BIDI = /[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu;
-const BLOCKSCOUT = 'https://robinhoodchain.blockscout.com';
 
 export function safeTelegramHtml(value: string | undefined, maxLength = 120): string {
   const cleaned = (value ?? '').replace(CONTROL_OR_BIDI, '').replace(/\s+/gu, ' ').trim();
@@ -13,26 +13,25 @@ export function safeTelegramHtml(value: string | undefined, maxLength = 120): st
 
 export function formatLaunchAlert(
   launch: DecodedLaunch,
-  enrichment: LaunchEnrichment,
+  profile: LaunchProfile,
+  manifest: LaunchpadManifest,
 ): string {
-  const { token, quote } = enrichment;
-  const quoteLabel = quote.symbol
-    ? `${safeTelegramHtml(quote.symbol)} <code>${quote.address}</code>`
-    : `<code>${quote.address}</code>`;
-  const supply = formatTokenAmount(token.totalSupply, token.decimals, token.symbol);
+  const { token, quote, creator } = profile;
+  const pairName = quote.name ?? quote.symbol;
+  const quoteLabel = `<code>${quote.address}</code> (${safeTelegramHtml(pairName)})`;
   const facts = [
-    '<b>Flywheel launch</b>',
-    `<b>Token Address</b> : <code>${launch.token}</code>`,
+    `🤖 <b>Token Address</b> : <code>${launch.token}</code>`,
     `<b>Name</b> : ${safeTelegramHtml(token.name)}`,
     `<b>Symbol</b> : ${safeTelegramHtml(token.symbol)}`,
-    `<b>Quote Asset</b> : ${quoteLabel}`,
-    `<b>Holder Rewards</b> : ${launch.holderRewardsEnabled ? 'enabled' : 'disabled'}`,
-    `<b>Total Supply</b> : ${supply}`,
+    `<b>Paired</b> : ${quoteLabel}`,
+    `<b>Holder Rewards</b> : ${launch.holderRewardsEnabled ? 'On' : 'Off'}`,
     `<b>Twitter</b> : ${safeTelegramHtml(token.twitter)}`,
-    `<b>Website</b> : ${safeTelegramHtml(token.website)}`,
-    `<b>Telegram</b> : ${safeTelegramHtml(token.telegram)}`,
-    `<b>About</b> : ${safeTelegramHtml(token.description, 500)}`,
-    `<b>Creator</b> : <a href="${BLOCKSCOUT}/address/${launch.creator}">${launch.creator}</a>`,
+    `<b>Creator</b> : <a href="${manifest.links.creatorPage}${launch.creator}">${launch.creator}</a>`,
+    `<b>Creator Nonce</b> : ${creator.nonce?.toString() ?? '-'}`,
+    `<b>Creator Balance</b> : ${formatTokenAmount(creator.nativeBalance, manifest.chain.nativeCurrency.decimals, manifest.chain.nativeCurrency.symbol)}`,
+    `<b>Count Deploys</b> : ${creator.deployCount?.toString() ?? '-'}`,
+    `<b>Creator Token Percents</b> : ${formatPercentage(creator.tokenPercentageBps)}`,
+    `<b>Creator Token Balance</b> : ${formatTokenAmount(creator.tokenBalance, token.decimals, token.symbol)}`,
   ];
   return facts.join('\n');
 }
@@ -43,4 +42,11 @@ function formatTokenAmount(value: bigint | undefined, decimals: number | undefin
   const [whole, fraction] = formatted.split('.');
   const compact = fraction ? `${whole ?? '0'}.${fraction.slice(0, 6)}` : whole ?? '0';
   return `${compact}${symbol ? ` ${safeTelegramHtml(symbol, 32)}` : ''}`;
+}
+
+function formatPercentage(basisPoints: bigint | undefined): string {
+  if (basisPoints === undefined) return '-';
+  const whole = basisPoints / 100n;
+  const fraction = (basisPoints % 100n).toString().padStart(2, '0');
+  return `${whole}.${fraction}%`;
 }

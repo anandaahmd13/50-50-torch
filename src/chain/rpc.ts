@@ -1,31 +1,32 @@
 import { createPublicClient, defineChain, fallback, http, webSocket } from 'viem';
 import type { AppConfig } from '../config.js';
+import { flywheelRobinhoodManifest } from '../integrations/flywheel-robinhood.js';
+import type { LaunchpadManifest } from '../integrations/types.js';
 
-export const robinhoodChain = defineChain({
-  id: 4663,
-  name: 'Robinhood Chain',
-  nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-  rpcUrls: {
-    default: { http: ['https://rpc.mainnet.chain.robinhood.com'] },
-  },
-  blockExplorers: {
-    default: { name: 'Robinhood Blockscout', url: 'https://robinhoodchain.blockscout.com' },
-  },
-});
+export function createManifestChain(manifest: LaunchpadManifest) {
+  return defineChain({
+    id: manifest.chain.id,
+    name: manifest.chain.name,
+    nativeCurrency: manifest.chain.nativeCurrency,
+    rpcUrls: { default: { http: [manifest.chain.rpcUrl] } },
+  });
+}
 
-export function createHttpClient(config: AppConfig) {
+export const robinhoodChain = createManifestChain(flywheelRobinhoodManifest);
+
+export function createHttpClient(config: AppConfig, manifest: LaunchpadManifest) {
   return createPublicClient({
-    chain: robinhoodChain,
+    chain: createManifestChain(manifest),
     transport: fallback(config.httpRpcUrls.map((url) => http(url, { retryCount: 2, timeout: 12_000 }))),
   });
 }
 
 export type FlywheelClient = ReturnType<typeof createHttpClient>;
 
-export function createWebSocketClient(config: AppConfig) {
+export function createWebSocketClient(config: AppConfig, manifest: LaunchpadManifest) {
   if (!config.wsRpcUrl) return undefined;
   return createPublicClient({
-    chain: robinhoodChain,
+    chain: createManifestChain(manifest),
     transport: webSocket(config.wsRpcUrl, { retryDelay: 1_000, timeout: 12_000 }),
   });
 }

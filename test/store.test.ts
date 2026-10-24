@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Store } from '../src/db/store.js';
-import type { DecodedLaunch, TokenMetadata } from '../src/chain/types.js';
+import type { DecodedLaunch, LaunchProfile } from '../src/chain/types.js';
 
 const paths: string[] = [];
 const temporaryStore = (): Store => {
@@ -20,13 +20,17 @@ const launch: DecodedLaunch = {
   transactionHash: '0xdc36ea456f1886b3a124856ee80cfbc50dd9e262bd18a7462fe91930114edc1e',
   logIndex: 73, blockNumber: 127_265_327n, blockHash: '0x4b92889b6817b36e3414bdfa64533d1fef9cc7db4e7ab1441c5c2534857c7aed',
 };
-const token: TokenMetadata = { name: 'Boomer', symbol: 'BOOMER', decimals: 18, totalSupply: 1n, unavailable: [] };
+const profile: LaunchProfile = {
+  token: { name: 'Boomer', symbol: 'BOOMER', decimals: 18, totalSupply: 1n, unavailable: [] },
+  quote: { address: launch.quoteAsset, unavailable: [] },
+  creator: { unavailable: [] },
+};
 
 describe('SQLite durable outbox', () => {
   it('is idempotent across a replay and leaves one notification', () => {
     const store = temporaryStore();
-    expect(store.recordLaunch(launch, token, '<b>launch</b>', ['1'])).toBe(true);
-    expect(store.recordLaunch(launch, token, '<b>launch</b>', ['1'])).toBe(false);
+    expect(store.recordLaunch(launch, profile, '<b>launch</b>', ['1'])).toBe(true);
+    expect(store.recordLaunch(launch, profile, '<b>launch</b>', ['1'])).toBe(false);
     expect(store.getDueOutbox()).toMatchObject([{
       token: launch.token.toLowerCase(),
       creator: launch.creator?.toLowerCase(),
@@ -39,7 +43,7 @@ describe('SQLite durable outbox', () => {
     const filename = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'flywheel-restart-')), 'watcher.sqlite');
     paths.push(path.dirname(filename));
     const first = new Store(filename);
-    first.recordLaunch(launch, token, '<b>launch</b>', ['1']);
+    first.recordLaunch(launch, profile, '<b>launch</b>', ['1']);
     first.close();
     const restarted = new Store(filename);
     expect(restarted.getDueOutbox()).toHaveLength(1);
@@ -48,7 +52,7 @@ describe('SQLite durable outbox', () => {
 
   it('cancels unsent messages and schedules remediation for sent messages on reorg', () => {
     const store = temporaryStore();
-    store.recordLaunch(launch, token, '<b>launch</b>', ['1', '2']);
+    store.recordLaunch(launch, profile, '<b>launch</b>', ['1', '2']);
     const [first] = store.getDueOutbox();
     store.markSent(first!.id, 42);
     const sent = store.rollbackFrom(launch.blockNumber);

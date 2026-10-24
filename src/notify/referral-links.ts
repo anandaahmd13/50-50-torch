@@ -1,11 +1,5 @@
 import type { Address, Hex } from 'viem';
-
-const BLOCKSCOUT = 'https://robinhoodchain.blockscout.com';
-const FLYWHEEL = 'https://flywheel.cash/v2';
-// Operator-supplied referral destinations. These only open external services;
-// the watcher never connects to a wallet or creates a transaction.
-const GMGN_TOKEN_REFERRAL = 'https://gmgn.ai/robinhood/token/kX4rUcuP_';
-const BASED_BOT_TOKEN_REFERRAL = 'https://t.me/based_eth_bot?start=r_odglug69420_b_';
+import type { LaunchpadManifest } from '../integrations/types.js';
 
 export interface LaunchLinks {
   token: Address;
@@ -14,20 +8,20 @@ export interface LaunchLinks {
 }
 
 /** Links only; this watcher never constructs, signs, or submits a trade. */
-export function launchReferralKeyboard({ token, creator, transactionHash }: LaunchLinks) {
+export function launchReferralKeyboard(
+  manifest: LaunchpadManifest,
+  { token, creator, transactionHash }: LaunchLinks,
+) {
   const contract = token.toLowerCase();
   return {
     inline_keyboard: [
+      manifest.links.buyLinks.map((link) => ({ text: link.label, url: `${link.urlPrefix}${contract}` })),
       [
-        { text: '🛒 Buy on GMGN ↗', url: `${GMGN_TOKEN_REFERRAL}${contract}` },
-        { text: '🚀 Buy on Based Bot ↗', url: `${BASED_BOT_TOKEN_REFERRAL}${contract}` },
+        { text: manifest.links.tokenPageLabel, url: `${manifest.links.tokenPage}${contract}` },
+        { text: '🌍 Contract ↗', url: `${manifest.links.contractPage}${contract}` },
       ],
-      [
-        { text: '🌀 Flywheel ↗', url: `${FLYWHEEL}/token/${contract}` },
-        { text: '🌍 Contract ↗', url: `${BLOCKSCOUT}/token/${contract}` },
-      ],
-      ...(creator ? [[{ text: '👤 Creator ↗', url: `${BLOCKSCOUT}/address/${creator}` }]] : []),
-      [{ text: '🧾 Tx ↗', url: `${BLOCKSCOUT}/tx/${transactionHash}` }],
+      ...(creator ? [[{ text: '👤 Creator ↗', url: `${manifest.links.creatorPage}${creator.toLowerCase()}` }]] : []),
+      [{ text: '🧾 Tx ↗', url: `${manifest.links.transactionPage}${transactionHash}` }],
     ],
   } as const;
 }

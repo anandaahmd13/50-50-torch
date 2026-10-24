@@ -1,6 +1,7 @@
 import type { Logger } from 'pino';
 import type { AppConfig } from '../config.js';
 import type { Store, StoredOutbox } from '../db/store.js';
+import type { LaunchpadManifest } from '../integrations/types.js';
 import { launchReferralKeyboard } from './referral-links.js';
 
 interface TelegramResponse<T> {
@@ -24,13 +25,17 @@ export class TelegramError extends Error {
 export class TelegramNotifier {
   private lastWriteAt = 0;
 
-  constructor(private readonly config: AppConfig, private readonly logger: Logger) {}
+  constructor(
+    private readonly config: AppConfig,
+    private readonly logger: Logger,
+    private readonly manifest: LaunchpadManifest,
+  ) {}
 
   async drain(store: Store): Promise<void> {
     if (store.isPaused()) return;
     for (const item of store.getDueOutbox()) {
       try {
-        const messageId = await this.send(item.chatId, item.body, launchReferralKeyboard({
+        const messageId = await this.send(item.chatId, item.body, launchReferralKeyboard(this.manifest, {
           token: item.token,
           creator: item.creator,
           transactionHash: item.txHash,

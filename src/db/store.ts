@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import type { Address, Hex } from 'viem';
-import type { DecodedLaunch, TokenMetadata } from '../chain/types.js';
+import type { DecodedLaunch, LaunchProfile } from '../chain/types.js';
 
 interface EventRow {
   tx_hash: string;
@@ -81,7 +81,7 @@ export class Store {
    */
   recordLaunch(
     launch: DecodedLaunch,
-    token: TokenMetadata,
+    profile: LaunchProfile,
     body: string,
     chatIds: readonly string[],
   ): boolean {
@@ -100,7 +100,7 @@ export class Store {
         creator: launch.creator?.toLowerCase() ?? null,
         blockNumber: Number(launch.blockNumber),
         blockHash: launch.blockHash.toLowerCase(),
-        payload: JSON.stringify(serialize(launch)),
+        payload: JSON.stringify(serialize({ launch, profile })),
         now,
       });
       if (event.changes === 0) return false;
@@ -111,8 +111,8 @@ export class Store {
           name=excluded.name, symbol=excluded.symbol, decimals=excluded.decimals,
           total_supply=excluded.total_supply, metadata_json=excluded.metadata_json, updated_at=excluded.updated_at
       `).run(
-        launch.token.toLowerCase(), token.name ?? null, token.symbol ?? null, token.decimals ?? null,
-        token.totalSupply?.toString() ?? null, JSON.stringify(serialize(token)), now,
+        launch.token.toLowerCase(), profile.token.name ?? null, profile.token.symbol ?? null, profile.token.decimals ?? null,
+        profile.token.totalSupply?.toString() ?? null, JSON.stringify(serialize(profile.token)), now,
       );
       const insertOutbox = this.database.prepare(`
         INSERT INTO outbox(tx_hash, log_index, chat_id, body, status, created_at)

@@ -1,23 +1,9 @@
-import type { DecodedLaunch, LaunchEnrichment, QuoteAssetMetadata, TokenMetadata } from './types.js';
+import type { DecodedLaunch, LaunchEnrichment, LaunchProfile, QuoteAssetMetadata, TokenMetadata } from './types.js';
 import type { FlywheelClient } from './rpc.js';
+import { isLogRangeError } from './rpc.js';
+import type { LaunchpadManifest } from '../integrations/types.js';
 
-const erc20Abi = [
-  { type: 'function', name: 'name', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] },
-  { type: 'function', name: 'symbol', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] },
-  { type: 'function', name: 'decimals', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint8' }] },
-  { type: 'function', name: 'totalSupply', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
-] as const;
-
-const flywheelTokenAbi = [
-  ...erc20Abi,
-  { type: 'function', name: 'logoURI', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] },
-  { type: 'function', name: 'description', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] },
-  { type: 'function', name: 'website', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] },
-  { type: 'function', name: 'twitter', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] },
-  { type: 'function', name: 'telegram', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] },
-] as const;
-
-const withTimeout = async <T>(name: string, promise: Promise<T>, timeoutMs: number, unavailable: string[]): Promise<T | undefined> => {
+export const withTimeout = async <T>(name: string, promise: Promise<T>, timeoutMs: number, unavailable: string[]): Promise<T | undefined> => {
   let timer: number | undefined;
   try {
     const value = await Promise.race([
@@ -40,6 +26,39 @@ const asString = (value: unknown): string | undefined => typeof value === 'strin
 const asNumber = (value: unknown): number | undefined => typeof value === 'number' ? value : undefined;
 const asBigInt = (value: unknown): bigint | undefined => typeof value === 'bigint' ? value : undefined;
 
+function readNoArg(
+  client: FlywheelClient,
+  address: DecodedLaunch['token'],
+  abi: LaunchpadManifest['tokenMetadata']['abi'],
+  functionName: string | undefined,
+  blockNumber: bigint,
+  timeoutMs: number,
+  unavailable: string[],
+  label = functionName,
+): Promise<unknown | undefined> {
+  if (!functionName) return Promise.resolve(undefined);
+  return withTimeout(label ?? functionName, client.readContract({
+    address,
+    abi,
+    functionName: functionName as never,
+    blockNumber,
+  } as never) as Promise<unknown>, timeoutMs, unavailable);
+}
+
+function readCreatorTokenBalance(
+  client: FlywheelClient,
+  manifest: LaunchpadManifest,
+  launch: DecodedLaunch,
+): Promise<unknown> {
+  return client.readContract({
+    address: launch.token,
+    abi: manifest.tokenMetadata.abi,
+    functionName: manifest.tokenMetadata.functions.creatorBalance as never,
+    args: [launch.creator],
+    blockNumber: launch.blockNumber,
+  } as never) as Promise<unknown>;
+}
+
 /**
  * Metadata is read directly from the newly launched token and its quote token.
  * Individual parallel reads avoid assuming a Multicall deployment on Robinhood
@@ -47,24 +66,27 @@ const asBigInt = (value: unknown): bigint | undefined => typeof value === 'bigin
  */
 export async function enrichLaunch(
   client: FlywheelClient,
+  manifest: LaunchpadManifest,
   launch: DecodedLaunch,
   timeoutMs = 5_000,
 ): Promise<LaunchEnrichment> {
   const tokenUnavailable: string[] = [];
   const quoteUnavailable: string[] = [];
+  const tokenFunctions = manifest.tokenMetadata.functions;
+  const quoteFunctions = manifest.quoteMetadata.functions;
   const [name, symbol, decimals, totalSupply, logoUri, description, website, twitter, telegram, quoteName, quoteSymbol, quoteDecimals] = await Promise.all([
-    withTimeout('name()', client.readContract({ address: launch.token, abi: flywheelTokenAbi, functionName: 'name' }), timeoutMs, tokenUnavailable),
-    withTimeout('symbol()', client.readContract({ address: launch.token, abi: flywheelTokenAbi, functionName: 'symbol' }), timeoutMs, tokenUnavailable),
-    withTimeout('decimals()', client.readContract({ address: launch.token, abi: flywheelTokenAbi, functionName: 'decimals' }), timeoutMs, tokenUnavailable),
-    withTimeout('totalSupply()', client.readContract({ address: launch.token, abi: flywheelTokenAbi, functionName: 'totalSupply' }), timeoutMs, tokenUnavailable),
-    withTimeout('logoURI()', client.readContract({ address: launch.token, abi: flywheelTokenAbi, functionName: 'logoURI' }), timeoutMs, tokenUnavailable),
-    withTimeout('description()', client.readContract({ address: launch.token, abi: flywheelTokenAbi, functionName: 'description' }), timeoutMs, tokenUnavailable),
-    withTimeout('website()', client.readContract({ address: launch.token, abi: flywheelTokenAbi, functionName: 'website' }), timeoutMs, tokenUnavailable),
-    withTimeout('twitter()', client.readContract({ address: launch.token, abi: flywheelTokenAbi, functionName: 'twitter' }), timeoutMs, tokenUnavailable),
-    withTimeout('telegram()', client.readContract({ address: launch.token, abi: flywheelTokenAbi, functionName: 'telegram' }), timeoutMs, tokenUnavailable),
-    withTimeout('quote name()', client.readContract({ address: launch.quoteAsset, abi: erc20Abi, functionName: 'name' }), timeoutMs, quoteUnavailable),
-    withTimeout('quote symbol()', client.readContract({ address: launch.quoteAsset, abi: erc20Abi, functionName: 'symbol' }), timeoutMs, quoteUnavailable),
-    withTimeout('quote decimals()', client.readContract({ address: launch.quoteAsset, abi: erc20Abi, functionName: 'decimals' }), timeoutMs, quoteUnavailable),
+    readNoArg(client, launch.token, manifest.tokenMetadata.abi, tokenFunctions.name, launch.blockNumber, timeoutMs, tokenUnavailable),
+    readNoArg(client, launch.token, manifest.tokenMetadata.abi, tokenFunctions.symbol, launch.blockNumber, timeoutMs, tokenUnavailable),
+    readNoArg(client, launch.token, manifest.tokenMetadata.abi, tokenFunctions.decimals, launch.blockNumber, timeoutMs, tokenUnavailable),
+    readNoArg(client, launch.token, manifest.tokenMetadata.abi, tokenFunctions.totalSupply, launch.blockNumber, timeoutMs, tokenUnavailable),
+    readNoArg(client, launch.token, manifest.tokenMetadata.abi, tokenFunctions.logoUri, launch.blockNumber, timeoutMs, tokenUnavailable),
+    readNoArg(client, launch.token, manifest.tokenMetadata.abi, tokenFunctions.description, launch.blockNumber, timeoutMs, tokenUnavailable),
+    readNoArg(client, launch.token, manifest.tokenMetadata.abi, tokenFunctions.website, launch.blockNumber, timeoutMs, tokenUnavailable),
+    readNoArg(client, launch.token, manifest.tokenMetadata.abi, tokenFunctions.twitter, launch.blockNumber, timeoutMs, tokenUnavailable),
+    readNoArg(client, launch.token, manifest.tokenMetadata.abi, tokenFunctions.telegram, launch.blockNumber, timeoutMs, tokenUnavailable),
+    readNoArg(client, launch.quoteAsset, manifest.quoteMetadata.abi, quoteFunctions.name, launch.blockNumber, timeoutMs, quoteUnavailable, 'quote name'),
+    readNoArg(client, launch.quoteAsset, manifest.quoteMetadata.abi, quoteFunctions.symbol, launch.blockNumber, timeoutMs, quoteUnavailable, 'quote symbol'),
+    readNoArg(client, launch.quoteAsset, manifest.quoteMetadata.abi, quoteFunctions.decimals, launch.blockNumber, timeoutMs, quoteUnavailable, 'quote decimals'),
   ]);
 
   const token: TokenMetadata = {
@@ -87,4 +109,81 @@ export async function enrichLaunch(
     unavailable: [...new Set(quoteUnavailable)],
   };
   return { token, quote };
+}
+
+/**
+ * Read creator facts at the exact post-transaction state of the launch block.
+ * One unavailable RPC call must never suppress an otherwise valid launch alert.
+ */
+export async function profileLaunch(
+  client: FlywheelClient,
+  manifest: LaunchpadManifest,
+  launch: DecodedLaunch,
+  timeoutMs = 5_000,
+): Promise<LaunchProfile> {
+  const unavailable: string[] = [];
+  const [enrichment, nonce, nativeBalance, tokenBalance, deployCount] = await Promise.all([
+    enrichLaunch(client, manifest, launch, timeoutMs),
+    withTimeout('creator nonce', client.getTransactionCount({ address: launch.creator, blockNumber: launch.blockNumber }), timeoutMs, unavailable),
+    withTimeout('creator native balance', client.getBalance({ address: launch.creator, blockNumber: launch.blockNumber }), timeoutMs, unavailable),
+    withTimeout('creator token balance', readCreatorTokenBalance(client, manifest, launch), timeoutMs, unavailable),
+    withTimeout('creator deploy count', countCreatorLaunches(client, manifest, launch), timeoutMs, unavailable),
+  ]);
+  const creatorTokenBalance = asBigInt(tokenBalance);
+  const supply = enrichment.token.totalSupply;
+  return {
+    ...enrichment,
+    creator: {
+      nonce: asBigInt(nonce),
+      nativeBalance: asBigInt(nativeBalance),
+      tokenBalance: creatorTokenBalance,
+      tokenPercentageBps: creatorTokenBalance !== undefined && supply !== undefined && supply > 0n
+        ? (creatorTokenBalance * 10_000n + supply / 2n) / supply
+        : undefined,
+      deployCount: typeof deployCount === 'number' ? deployCount : undefined,
+      unavailable: [...new Set(unavailable)],
+    },
+  };
+}
+
+async function countCreatorLaunches(
+  client: FlywheelClient,
+  manifest: LaunchpadManifest,
+  launch: DecodedLaunch,
+): Promise<number> {
+  let total = 0;
+  for (const factory of manifest.factories) {
+    let fromBlock = factory.startBlock;
+    let chunkSize = manifest.creatorDeployCounter.initialChunkSize;
+    while (fromBlock <= launch.blockNumber) {
+      const toBlock = fromBlock + chunkSize - 1n > launch.blockNumber
+        ? launch.blockNumber
+        : fromBlock + chunkSize - 1n;
+      try {
+        const logs = await client.getLogs({
+          address: factory.address,
+          event: manifest.launch.event as never,
+          args: { [manifest.launch.fieldNames.creator]: launch.creator } as never,
+          fromBlock,
+          toBlock,
+        }) as unknown as readonly unknown[];
+        total += logs.length;
+        fromBlock = toBlock + 1n;
+        if (chunkSize < manifest.creatorDeployCounter.initialChunkSize) {
+          chunkSize = chunkSize * 2n > manifest.creatorDeployCounter.initialChunkSize
+            ? manifest.creatorDeployCounter.initialChunkSize
+            : chunkSize * 2n;
+        }
+      } catch (error) {
+        if (isLogRangeError(error) && chunkSize > manifest.creatorDeployCounter.minimumChunkSize) {
+          chunkSize = chunkSize / 2n < manifest.creatorDeployCounter.minimumChunkSize
+            ? manifest.creatorDeployCounter.minimumChunkSize
+            : chunkSize / 2n;
+          continue;
+        }
+        throw error;
+      }
+    }
+  }
+  return total;
 }

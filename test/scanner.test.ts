@@ -3,9 +3,10 @@ import pino from 'pino';
 import fixture from './fixtures/flywheel-boomer-token-launched.json' with { type: 'json' };
 import { DurableScanner } from '../src/chain/scanner.js';
 import type { AppConfig } from '../src/config.js';
+import { flywheelRobinhoodManifest } from '../src/integrations/flywheel-robinhood.js';
 
 const config: AppConfig = {
-  chainId: 4663, httpRpcUrls: ['https://example.invalid'], dbPath: ':memory:', pollIntervalMs: 1_000,
+  integrationId: 'flywheel-robinhood', chainId: 4663, httpRpcUrls: ['https://example.invalid'], dbPath: ':memory:', pollIntervalMs: 1_000,
   reorgWindow: 24, initialChunkSize: 8, minChunkSize: 2, finalityConfirmations: 15, dryRun: true,
   telegramChatIds: [], telegramAdminUserIds: new Set(), telegramMinIntervalMs: 1_000,
 };
@@ -17,7 +18,7 @@ describe('adaptive getLogs', () => {
     const scanner = new DurableScanner(
       {} as never,
       { recordBlock } as never,
-      config,
+      config, flywheelRobinhoodManifest,
       { onLaunch, onReorg: vi.fn() },
       pino({ enabled: false }),
     );
@@ -37,7 +38,7 @@ describe('adaptive getLogs', () => {
     const scanner = new DurableScanner(
       { getLogs } as never,
       { getCursor: () => undefined, setCursor: vi.fn(), getRecentBlocks: () => [], recordBlock: vi.fn(), rollbackFrom: vi.fn() } as never,
-      config,
+      config, flywheelRobinhoodManifest,
       { onLaunch: vi.fn(), onReorg: vi.fn() },
       pino({ enabled: false }),
     );
@@ -51,7 +52,7 @@ describe('adaptive getLogs', () => {
     const scanner = new DurableScanner(
       { getLogs } as never,
       { getCursor: () => undefined, setCursor: vi.fn(), getRecentBlocks: () => [], recordBlock: vi.fn(), rollbackFrom: vi.fn() } as never,
-      config,
+      config, flywheelRobinhoodManifest,
       { onLaunch: vi.fn(), onReorg: vi.fn() },
       pino({ enabled: false }),
     );
@@ -70,7 +71,7 @@ describe('adaptive getLogs', () => {
         getLogs: vi.fn().mockRejectedValue(new Error('block range extends beyond current head block: requested 100, head 99')),
       } as never,
       { getCursor: () => 99n, setCursor, getRecentBlocks: () => [], recordBlock: vi.fn(), rollbackFrom: vi.fn() } as never,
-      config,
+      config, flywheelRobinhoodManifest,
       { onLaunch: vi.fn(), onReorg: vi.fn() },
       pino({ enabled: false }),
     );

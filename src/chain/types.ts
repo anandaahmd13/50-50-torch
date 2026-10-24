@@ -1,5 +1,4 @@
 import type { Address, Hex } from 'viem';
-import type { LaunchEventName } from '../contracts/flywheel.js';
 
 export interface ChainLog {
   address: Address;
@@ -13,7 +12,7 @@ export interface ChainLog {
 }
 
 export interface DecodedLaunch {
-  eventName: LaunchEventName;
+  eventName: string;
   factory: Address;
   token: Address;
   creator: Address;
@@ -49,4 +48,18 @@ export interface QuoteAssetMetadata {
 export interface LaunchEnrichment {
   token: TokenMetadata;
   quote: QuoteAssetMetadata;
+}
+
+/** Immutable values observed at the launch block, not at a later latest block. */
+export interface CreatorSnapshot {
+  nonce?: bigint;
+  nativeBalance?: bigint;
+  tokenBalance?: bigint;
+  tokenPercentageBps?: bigint;
+  deployCount?: number;
+  unavailable: readonly string[];
+}
+
+export interface LaunchProfile extends LaunchEnrichment {
+  creator: CreatorSnapshot;
 }

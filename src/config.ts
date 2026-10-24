@@ -5,6 +5,7 @@ const integer = (min: number, fallback: number) =>
   z.coerce.number().int().min(min).default(fallback);
 
 const schema = z.object({
+  INTEGRATION_ID: z.string().min(1).default('flywheel-robinhood'),
   CHAIN_ID: z.coerce.number().int().default(ROBINHOOD_CHAIN_ID),
   HTTP_RPC_URLS: z.string().min(1, 'HTTP_RPC_URLS is required'),
   WS_RPC_URL: z.string().url().optional().or(z.literal('')),
@@ -25,6 +26,7 @@ const schema = z.object({
 const commaList = (value: string) => value.split(',').map((entry) => entry.trim()).filter(Boolean);
 
 export interface AppConfig {
+  integrationId: string;
   chainId: number;
   httpRpcUrls: readonly string[];
   wsRpcUrl?: string;
@@ -59,6 +61,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
     throw new Error('TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_IDS are required when DRY_RUN=false');
   }
   return {
+    integrationId: raw.INTEGRATION_ID,
     chainId: raw.CHAIN_ID,
     httpRpcUrls,
     wsRpcUrl: raw.WS_RPC_URL || undefined,
@@ -80,6 +83,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
 /** Safe to log: deliberately excludes bot token and never expands URLs with credentials. */
 export function redactConfig(config: AppConfig): Record<string, unknown> {
   return {
+    integrationId: config.integrationId,
     chainId: config.chainId,
     httpRpcEndpointCount: config.httpRpcUrls.length,
     hasWsRpc: Boolean(config.wsRpcUrl),
